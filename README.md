@@ -26,14 +26,14 @@ $ curl http://0.0.0.0:5000/run/<service_name>
 2. 작업 정지
 
 ```
-$ curl http://0.0.0.0:5000/stop/<container_id>
+$ curl http://0.0.0.0:5000/stop/<service_name>
 ```
 > http://0.0.0.0:5000/stop/a8e8693e21fd
 
 3. 작업 삭제
 
 ```
-$ curl http://0.0.0.0:5000/remove/<container_id>
+$ curl http://0.0.0.0:5000/remove/<service_name>
 ```
 > http://0.0.0.0:5000/remove/a8e8693e21fd
 

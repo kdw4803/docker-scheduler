@@ -4,6 +4,8 @@ import yaml
 
 app = Flask(__name__)
 
+client = docker.from_env()
+
 # get list of services in docker-compose.yml except master scheduler
 services = { k: v
     for k, v in yaml.safe_load(open("docker-compose.yml", 'r'))['services'].items()
@@ -20,23 +22,23 @@ def index():
         'api_spec': {
             'run_container': {
                 'url' : '/run/<service_name>',
-                'description': '컨테이너 실행'
+                'description': '작업 실행'
             },
             'stop_container': {
-                'url' : '/stop/<container_id>',
-                'description': '컨테이너 정지'
+                'url' : '/stop/<service_name>',
+                'description': '작업 정지'
             },
             'remove_container': {
-                'url' : '/remove/<container_id>',
-                'description': '컨테이너 삭제'
+                'url' : '/remove/<service_name>',
+                'description': '작업 삭제'
             },
             'scale_container': {
                 'url' : '/scale/<service_name>/<replicas>',
-                'description': '컨테이터 스케일 in-out'
+                'description': '작업 스케일 in-out'
             },
             'get_info': {
                 'url' : '/info',
-                'description': '컨테이너 스케쥴링 상태 조회'
+                'description': '작업 스케쥴링 상태 조회'
             },
             'get_resource': {
                 'url' : '/resource',
@@ -47,8 +49,6 @@ def index():
 
 @app.route('/run/<service_name>')
 def run_container(service_name):
-    client = docker.from_env()
-
     # validate the service_name whether it exists
     if service_name not in services.keys():
         return {
@@ -56,9 +56,7 @@ def run_container(service_name):
         }
 
     try:
-        # get image_name of the service & run the container
-        image_name = services[service_name]['image']
-        container = client.containers.run(image_name, detach=True)
+        container = do_run_container(service_name)
 
         return {
             'message': 'Container {} ({}) is started.'.format(container.short_id, container.image.tags[0]),
@@ -78,19 +76,23 @@ def run_container(service_name):
         }
     except Exception as e:
         return {
-            'message': 'error'
+            'message': e
         }
 
-@app.route('/stop/<container_id>')
-def stop_container(container_id):
-    client = docker.from_env()
+@app.route('/stop/<service_name>')
+def stop_container(service_name):
+    # validate the service_name whether it exists
+    if service_name not in services.keys():
+        return {
+            'message': 'the specified service does not exist'
+        }
 
     try:
-        client.containers.get(container_id).stop()
+        do_stop_containers(service_name)
 
         return {
-            'message': 'Container {} is stopped.'.format(container_id),
-            'container_id': container_id
+            'message': 'Job {} is stopped.'.format(service_name),
+            'service_name': service_name
         }
     except docker.errors.NotFound:
         return {
@@ -102,19 +104,23 @@ def stop_container(container_id):
         }
     except Exception as e:
         return {
-            'message': 'error'
+            'message': e
         }
 
-@app.route('/remove/<container_id>')
-def remove_container(container_id):
-    client = docker.from_env()
+@app.route('/remove/<service_name>')
+def remove_container(service_name):
+    # validate the service_name whether it exists
+    if service_name not in services.keys():
+        return {
+            'message': 'the specified service does not exist'
+        }
 
     try:
-        client.containers.get(container_id).remove(force=True)
+        do_remove_containers(service_name)
 
         return {
-            'message': 'Container {} is removed.'.format(container_id),
-            'container_id': container_id
+            'message': 'Job {} is removed.'.format(service_name),
+            'service_name': service_name
         }
     except docker.errors.NotFound:
         return {
@@ -131,27 +137,24 @@ def remove_container(container_id):
 
 @app.route('/scale/<service_name>/<replicas>')
 def scale_container(service_name, replicas):
-    client = docker.from_env()
     message = ''
-    containers = []
     number = int(replicas)
 
-    try:
-        # get image_name of the service
-        image_name = services[service_name]['image']
+    # validate the service_name whether it exists
+    if service_name not in services.keys():
+        return {
+            'message': 'the specified service does not exist'
+        }
 
-        # get a list of containers with same image
-        for container in client.containers.list():
-            if container.image.tags[0] == image_name:
-                containers.append(container)
+    try:
+        containers = get_containers_with_service_name(service_name)
 
         if len(containers) > number: # scale in
-            for container in containers[0:(len(containers) - number)]:
-                container.stop()
+            do_stop_containers(service_name, number)
             message = '{} of Containers is/are stopped.'.format(len(containers) - number)
         elif len(containers) < number: # scale out
             for i in range(number - len(containers)):
-                client.containers.run(image_name, detach=True)
+                do_run_container(service_name)
             message = '{} of Containers is/are started.'.format(number - len(containers))
         else:
             message = 'Desired # of Containers is/are already running.'
@@ -170,7 +173,6 @@ def scale_container(service_name, replicas):
 
 @app.route('/info')
 def get_info():
-    client = docker.from_env()
     containers = {}
 
     try:
@@ -195,7 +197,6 @@ def get_info():
 
 @app.route('/resource')
 def get_resource():
-    client = docker.from_env()
     containers = {}
 
     try:
@@ -212,6 +213,37 @@ def get_resource():
         return {
             'message': 'error'
         }
+
+def do_run_container(service_name):
+    # get image_name of the service & run the container
+    image_name = services[service_name]['image']
+    container = client.containers.run(image_name, detach=True)
+    return container
+
+def do_stop_containers(service_name, number = 0):
+    containers = get_containers_with_service_name(service_name)
+
+    for container in containers[0:(len(containers) - number)]:
+            container.stop()
+
+def do_remove_containers(service_name):
+    containers = get_containers_with_service_name(service_name)
+
+    for container in containers:
+            container.remove(force=True)
+
+def get_containers_with_service_name(service_name):
+    containers = []
+
+    # get image_name of the service
+    image_name = services[service_name]['image']
+
+    # get a list of containers with same image
+    for container in client.containers.list():
+        if container.image.tags[0] == image_name:
+            containers.append(container)
+
+    return containers
 
 
 if __name__ == '__main__':
