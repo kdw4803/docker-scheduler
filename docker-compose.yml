@@ -1,8 +1,12 @@
 version: "3"
 services:
-  scheduler:
+  master:
     build: .
     volumes:
        - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "5000:5000"
+  job_1:
+    image: nginx:latest
+  job_2:
+    image: alseambusher/crontab-ui:latest

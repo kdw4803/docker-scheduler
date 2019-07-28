@@ -1,42 +1,63 @@
 from flask import Flask
 import docker
+import yaml
 
 app = Flask(__name__)
+
+# get list of services in docker-compose.yml except master scheduler
+services = { k: v
+    for k, v in yaml.safe_load(open("docker-compose.yml", 'r'))['services'].items()
+    if k != 'master'
+}
+
+# get images from services
+images = [ x['image'] for x in list(services.values())]
 
 @app.route('/')
 def index():
     return {
-        'run_container': {
-            'url' : '/run/<path:image_name>',
-            'description': '컨테이너 실행'
-        },
-        'stop_container': {
-            'url' : '/stop/<container_id>',
-            'description': '컨테이너 정지'
-        },
-        'remove_container': {
-            'url' : '/remove/<container_id>',
-            'description': '컨테이너 삭제'
-        },
-        'scale_container': {
-            'url' : '/scale/<container_id>/<replicas>',
-            'description': '컨테이터 스케일 in-out'
-        },
-        'get_info': {
-            'url' : '/info',
-            'description': '컨테이너 스케쥴링 상태 조회'
-        },
-        'get_resource': {
-            'url' : '/resource',
-            'description': '자원 사용 현황 조회'
+        'services': services,
+        'api_spec': {
+            'run_container': {
+                'url' : '/run/<service_name>',
+                'description': '컨테이너 실행'
+            },
+            'stop_container': {
+                'url' : '/stop/<container_id>',
+                'description': '컨테이너 정지'
+            },
+            'remove_container': {
+                'url' : '/remove/<container_id>',
+                'description': '컨테이너 삭제'
+            },
+            'scale_container': {
+                'url' : '/scale/<service_name>/<replicas>',
+                'description': '컨테이터 스케일 in-out'
+            },
+            'get_info': {
+                'url' : '/info',
+                'description': '컨테이너 스케쥴링 상태 조회'
+            },
+            'get_resource': {
+                'url' : '/resource',
+                'description': '자원 사용 현황 조회'
+            }
         }
     }
 
-@app.route('/run/<path:image_name>')
-def run_container(image_name):
+@app.route('/run/<service_name>')
+def run_container(service_name):
     client = docker.from_env()
 
+    # validate the service_name whether it exists
+    if service_name not in services.keys():
+        return {
+            'message': 'the specified service does not exist'
+        }
+
     try:
+        # get image_name of the service & run the container
+        image_name = services[service_name]['image']
         container = client.containers.run(image_name, detach=True)
 
         return {
@@ -108,16 +129,16 @@ def remove_container(container_id):
             'message': 'error'
         }
 
-@app.route('/scale/<container_id>/<replicas>')
-def scale_container(container_id, replicas):
+@app.route('/scale/<service_name>/<replicas>')
+def scale_container(service_name, replicas):
     client = docker.from_env()
     message = ''
     containers = []
     number = int(replicas)
 
     try:
-        # get image data of container for scaling
-        image_name = client.containers.get(container_id).image.tags[0]
+        # get image_name of the service
+        image_name = services[service_name]['image']
 
         # get a list of containers with same image
         for container in client.containers.list():
@@ -153,7 +174,8 @@ def get_info():
     containers = {}
 
     try:
-        for container in client.containers.list():
+        # get list of containers only in docker-compose.yml
+        for container in list(filter(lambda x: x.image.tags[0] in images, client.containers.list())):
             containers[container.short_id] = {
                 'image': container.image.tags[0],
                 'status': container.status,
@@ -168,7 +190,7 @@ def get_info():
         }
     except Exception as e:
         return {
-            'message': 'error'
+            'message': e
         }
 
 @app.route('/resource')
@@ -177,7 +199,8 @@ def get_resource():
     containers = {}
 
     try:
-        for container in client.containers.list():
+        # get list of containers only in docker-compose.yml
+        for container in list(filter(lambda x: x.image.tags[0] in images, client.containers.list())):
             containers[container.short_id] = container.stats(stream=False)
 
         return containers
