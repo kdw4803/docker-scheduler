@@ -28,14 +28,14 @@ $ curl http://0.0.0.0:5000/run/<service_name>
 ```
 $ curl http://0.0.0.0:5000/stop/<service_name>
 ```
-> http://0.0.0.0:5000/stop/a8e8693e21fd
+> http://0.0.0.0:5000/stop/job_1
 
 3. 작업 삭제
 
 ```
 $ curl http://0.0.0.0:5000/remove/<service_name>
 ```
-> http://0.0.0.0:5000/remove/a8e8693e21fd
+> http://0.0.0.0:5000/remove/job_1
 
 4. 작업 스케일 in-out
 
